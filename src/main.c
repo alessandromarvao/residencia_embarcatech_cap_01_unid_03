@@ -8,7 +8,11 @@
 #define GREEN_LED_PIN   11
 #define BUTTON_PIN       5
 
+// Semáforo para sinalizar que o botão foi pressionado.
 SemaphoreHandle_t yellow_override_semaphore;
+
+// Flag global para indicar se o LED verde está aceso.
+static volatile bool is_green_on = false;
 
 // Função para configurar os GPIOs
 void setup_leds() {
@@ -36,7 +40,7 @@ bool led_stage_with_interrupt(uint red, uint green, int delay_ms) {
     int waited = 0;
 
     while (waited < delay_ms) {
-        if (xSemaphoreTake(yellow_override_semaphore, 0) == pdTRUE) {
+        if (xSemaphoreTake(yellow_override_semaphore, 0) == pdTRUE && is_green_on) {
             // Botão pressionado: faz override
             printf("⚠️ Botão pressionado! Interrompendo ciclo\n");
             gpio_put(RED_LED_PIN, 1);
@@ -49,6 +53,7 @@ bool led_stage_with_interrupt(uint red, uint green, int delay_ms) {
         waited += check_interval;
     }
 
+    is_green_on = false;
     return false; // ciclo normal
 }
 
@@ -59,6 +64,8 @@ void traffic_light_task(void *params) {
         if (led_stage_with_interrupt(1, 0, 5000)) continue;
 
         printf("Verde por 5s\n");
+        // Sinaliza que o sinal está verde, única condição para acionar o sinal amarelo a partir do botão
+        is_green_on = true;
         if (led_stage_with_interrupt(0, 1, 5000)) continue;
 
         printf("Amarelo (vermelho+verde) por 3s\n");
@@ -69,8 +76,10 @@ void traffic_light_task(void *params) {
 // Callback da interrupção do botão
 void gpio_callback(uint gpio, uint32_t events) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    // Sinaliza botão pressionado.
     if (gpio == BUTTON_PIN && (events & GPIO_IRQ_EDGE_FALL)) {
         xSemaphoreGiveFromISR(yellow_override_semaphore, &xHigherPriorityTaskWoken);
+        // Solicita troca de contexto se necessário.
         portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 }
